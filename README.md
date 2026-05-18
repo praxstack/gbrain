@@ -46,13 +46,22 @@ detects contradictions in your typed claims about people and companies, and
 flags trajectory regressions. You wake up and the brain is smarter than when
 you went to bed.
 
-GBrain is those patterns, generalized. **Install in 30 minutes. Your agent
-does the work.** As my personal agent gets smarter, so does yours.
+GBrain is those patterns, generalized. As my personal agent gets smarter,
+so does yours.
 
-> Database ready in 2 seconds (PGLite, no server). Full eval scorecards,
-> reproduction instructions, cross-system comparisons, and the
-> corpora live in the sibling
-> [gbrain-evals](https://github.com/garrytan/gbrain-evals) repo.
+### What it is, technically
+
+- **Open-source** (MIT) TypeScript CLI + MCP server. One binary, no service
+  to host. Mac and Linux. Requires [Bun](https://bun.sh) 1.3+.
+- **Local-first.** Your brain lives in `~/.gbrain` on your machine. Embedded
+  Postgres (PGLite via WASM) so there's no database to install — ready in
+  ~2 seconds. Or point at your own Postgres / Supabase for big brains.
+- **Your data stays on disk.** Embedding calls hit OpenAI / Voyage / Anthropic
+  only if you configure those keys. Sync, search, and graph extraction all
+  run locally with zero outbound traffic.
+- **Speaks MCP.** Plugs into Claude Code, Cursor, Windsurf, ChatGPT desktop,
+  and any agent that consumes the Model Context Protocol — stdio for local,
+  HTTP + OAuth 2.1 for multi-user.
 
 > **LLMs:** fetch [`llms.txt`](llms.txt) for the doc map, or
 > [`llms-full.txt`](llms-full.txt) for the map with core docs inlined.
@@ -63,55 +72,74 @@ does the work.** As my personal agent gets smarter, so does yours.
 
 ## Install
 
-### On an agent platform (recommended)
+Three paths, ordered by how much you're committing.
 
-GBrain is designed to be installed and operated by an AI agent. If you don't
-have one running yet:
+### Path 1 — 60 seconds, just try it (standalone CLI)
+
+```bash
+git clone https://github.com/garrytan/gbrain.git
+cd gbrain && bun install && bun link
+gbrain init                     # brain ready in ~2 seconds (PGLite)
+gbrain import ~/notes/          # index any directory of markdown
+gbrain query "what themes show up across my notes?"
+```
+
+What you'll see — gbrain finds the relevant pages, ranks them by hybrid
+search, and prints the top hits with snippets:
+
+```
+$ gbrain query "what themes show up across my notes?"
+Found 8 results in 124ms (hybrid: vector + keyword + RRF)
+
+1. concepts/durable-systems.md           (score 0.91)
+   "Software that survives its maintainers has three properties: ..."
+2. essays/2025-thinking-out-loud.md      (score 0.87)
+   "I keep coming back to the idea that the best companies ..."
+3. meetings/2026-02-12-alice-call.md     (score 0.83)
+   "Discussed how Alice's framework for ..."
+...
+```
+
+Add `gbrain extract all` after import to build the knowledge graph
+(entity links + timeline edges). `gbrain dream` runs the full 9-phase
+maintenance cycle.
+
+### Path 2 — Plug it into Claude Code / Cursor (MCP)
+
+```bash
+# Local single-user via stdio MCP
+claude mcp add gbrain "$(which gbrain) serve"
+
+# Multi-user via HTTP MCP with OAuth 2.1 + admin dashboard
+gbrain serve --http                              # prints admin bootstrap token
+gbrain serve --http --bind 0.0.0.0 --public-url https://brain.example.com
+```
+
+Now ask Claude / Cursor "what did Alice and I discuss last quarter?"
+and it queries your brain. The HTTP server supports OAuth 2.1
+(`client_credentials`, `authorization_code` with PKCE, refresh rotation,
+revocation, RFC 7591 DCR). Source-scoped clients (`--source dept-x`) tie
+write authority to one source; `--federated-read S1,S2,S3` adds orthogonal
+read scopes. Loopback bind by default — pass `--bind 0.0.0.0` to publish.
+
+### Path 3 — Full agentic install (~30 min)
+
+If you want the nightly auto-enrichment, cron jobs, and overnight
+synthesis I described above, the brain needs an agent to drive it.
 
 - **[OpenClaw](https://openclaw.ai)** — deploy [AlphaClaw on Render](https://render.com/deploy?repo=https://github.com/chrysb/alphaclaw) (one click, 8GB+ RAM)
 - **[Hermes Agent](https://github.com/NousResearch/hermes-agent)** — deploy on [Railway](https://github.com/praveen-ks-2001/hermes-agent-template) (one click)
 
-Paste this into your agent:
+Then paste this into your agent:
 
 ```
 Retrieve and follow the instructions at:
 https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md
 ```
 
-The agent clones the repo, installs GBrain, sets up the brain, loads 35
-skills, and configures recurring jobs. You answer a few questions about
-API keys. ~30 minutes.
-
-### Standalone CLI (no agent)
-
-```bash
-git clone https://github.com/garrytan/gbrain.git && cd gbrain && bun install && bun link
-gbrain init                     # local brain, ready in 2 seconds
-gbrain import ~/notes/          # index your markdown
-gbrain query "what themes show up across my notes?"
-```
-
-`gbrain init` picks a search mode (`conservative` / `balanced` / `tokenmax`).
-Cost spread depends on mode × downstream model — see [docs/eval/SEARCH_MODE_METHODOLOGY.md](docs/eval/SEARCH_MODE_METHODOLOGY.md)
-for the full matrix and `gbrain search modes` for what's active.
-
-### MCP server (Claude Code, Cursor, Windsurf)
-
-```bash
-# stdio MCP — local single-user
-claude mcp add gbrain "$(which gbrain) serve"
-
-# HTTP MCP — multi-user, OAuth 2.1, admin dashboard
-gbrain serve --http                              # prints admin bootstrap token
-gbrain serve --http --bind 0.0.0.0 --public-url https://gbrain.example.com
-```
-
-The HTTP server supports **OAuth 2.1** (`client_credentials`,
-`authorization_code` with PKCE, refresh token rotation, revocation, RFC 7591
-DCR behind `--enable-dcr`). Source-scoped clients with `--source dept-x` tie
-write authority to one source; `--federated-read S1,S2,S3` adds orthogonal
-read scopes. Loopback bind by default — pass `--bind 0.0.0.0` to publish to
-the LAN.
+It clones the repo, installs GBrain, sets up the brain, scaffolds 35
+skills, configures recurring jobs, and asks you for the API keys it
+needs. Budget ~30 minutes for the conversation.
 
 ---
 
