@@ -2,6 +2,121 @@
 
 All notable changes to GBrain will be documented in this file.
 
+## [0.36.1.0] - 2026-05-18
+
+**Twenty-eight community-reported bugs fix themselves on your next `gbrain upgrade`.** The most painful ones first: fresh installs work again, `/admin` actually serves the dashboard, `gbrain config set openai_api_key` stops echoing your secret to stderr, and `extract_facts` no longer dead-letters autopilot when a sync no-op passes an empty slug list.
+
+Here's what was happening. The community filed ~40 bug reports against gbrain over the last few weeks. Some were duplicates of fixes that already shipped in v0.35.x. Some were real, painful, and unfixed. Fresh PGLite installs wedged on the v0.11.0 Minions migration. Globally-installed `gbrain serve --http` returned 404 on `/admin` because the React dashboard was checked into git but never embedded into the compiled binary. Configs with `provider: voyage` + `model: voyage-3` silently fell through to OpenAI and errored out. Autopilot respawned in tight loops on brains where the orphans phase warned every cycle. None of these were one-line fixes — they all had real root causes worth understanding.
+
+This release is the cleanup pass. 22 community PRs + 14 issues closed as already-shipped (with thank-you notes attributing each contributor). 28 atomic fixes in this PR, one per commit, each with its regression test. No new features. No breaking changes. Just bugs that hurt users, fixed.
+
+### How to get it
+
+```bash
+gbrain upgrade
+```
+
+Your install picks up everything below. If `/admin` was broken for you, it works after this upgrade. If your `gbrain sync --source-id work` was silently writing to the default source — well, master already fixed that since v0.18, but the regression test suite locking it in is new in this release. If you were on `provider: voyage` config shape, gbrain now translates it to `embedding_model: voyage:...` and prints a one-line nudge to update your config.
+
+### The fixes that matter most
+
+**Fresh-install / upgrade reliability:**
+- `/admin` 404 on every globally-installed binary (#1090). The React SPA is now auto-embedded via `with { type: 'file' }` ESM imports — same pattern as the tree-sitter WASMs. New `scripts/build-admin-embedded.ts` generator + CI guard prevents the embed manifest from drifting against `admin/dist/`.
+- PGLite + `gbrain apply-migrations --yes` wedge (#1100). The pre-flight schema-version probe held the single-writer lock briefly and raced the v0.11.0 phase A subprocess; phase A spawned `gbrain init --migrate-only` which deadlocked. Pre-flight skips PGLite; phase A routes in-process for PGLite. Verified end-to-end on a fresh install — the full migration chain through v0.32.2 walks cleanly.
+- `gbrain upgrade` "no package.json" failure (#1029). Now resolves Bun's global install root via `$BUN_INSTALL` or `~/.bun/install/global`; works regardless of cwd. Contributed by @mvanhorn.
+
+**Data-loss / silent wrong-destination writes:**
+- `extract_facts` with `slugs: []` was triggering an unscoped full-brain walk (#1096). On multi-thousand-page brains this exceeded the autopilot-cycle timeout and dead-lettered the job. Empty array is now a real no-op; missing key preserves the legacy unscoped walk.
+- Voyage / Cohere / Mistral users with legacy `provider` + `model` config silently fell through to OpenAI (#1086). gbrain now translates to `embedding_model: <provider>:<model>` at load time with a one-line stderr nudge to update the config.
+- Embedding responses with mismatched length now fail loud before indexing (#925). Pre-fix, a provider returning N-1 embeddings for N inputs silently indexed an offset-shifted result.
+- `gbrain sync --source-id X` source-routing is now locked in with 6 PGLite regression cases (#891, #978, #1078). The threading was correct in master since v0.18, but no regression coverage existed — a future refactor could have silently re-introduced the bug.
+
+**Security / privilege:**
+- `gbrain config set openai_api_key sk-...` no longer echoes the key value to stderr (#892). Sensitive-key matcher uses word-boundary regex so `monkey` doesn't false-positive. Cherry-pick of @sharziki's PR.
+- `verifyAccessToken` now throws `InvalidTokenError` on expired/invalid tokens so the SDK's bearer-auth middleware returns 401 instead of 500 (#935). Cherry-pick of @Aashiqe10's PR.
+- Admin bootstrap token: new `GBRAIN_ADMIN_BOOTSTRAP_TOKEN` env override (32+ char, validated) + `--suppress-bootstrap-token` CLI flag (#1024). Production deployments stop leaking the token to log aggregators on every supervisor restart.
+- Admin dashboard register-client supports `authorization_code` + PKCE public clients (claude.ai Custom Connector, Cursor) (#1077). Cherry-pick of @lukejduncan's PR.
+
+**Reliability / UX:**
+- Autopilot stop respawn-storm from steady-state `partial` cycles (#1113). Trips only on `failed` now. Cherry-pick of @sergeclaesen's PR.
+- `gbrain doctor` no longer warns about a missing whoknows fixture for every install that isn't standing in the source repo (#969). Cherry-pick of @mvanhorn's PR.
+- Frontmatter `--fix` backups land under `~/.gbrain/backups/frontmatter/` instead of polluting the brain repo (#902). Cherry-pick of @100yenadmin's PR.
+- `gbrain query` source-id routing fixes — `--no-expand` actually negates `expand` instead of being a literal `no_expand` key (#1124); cache writes drain before CLI exit so the warmup works (#1125). Cherry-picks of @hnshah's PRs.
+- 17 more cherry-picks across `serve-http.ts` (405 on GET /mcp, CORS, PKCE admin register), `sync.ts` (.tf/.tfvars/.hcl extensions, skip-pull-no-origin, scope auto-embed), `doctor.ts` (child-table orphan detection, whoknows fixture), `oauth-provider.ts` (InvalidTokenError), `autopilot.ts` (~/.zshenv source order), `backlinks.ts` (dedupe source/target pairs), and `cycle.ts` (dream audit-only).
+
+### What's deferred
+
+Four items shipped a clear roadmap message instead of an incomplete fix:
+- **#803 OAuth auth-code flow.** The MCP SDK does plaintext compare against `getClient().client_secret` — but we store the hash at rest (correct security posture). No clean SDK override seam exists. The proper fix is our own `/token` endpoint that bcrypt-verifies against `oauth_clients.client_secret_hash` and bypasses `mcpAuthRouter` for `/token`. ~1-2 day dedicated PR.
+- **#983 CORS allowlist.** Tightening CORS without a compatibility matrix of legitimate browser-based MCP origins (claude.ai, Perplexity dashboard, our own admin SPA) risks breaking real clients.
+- **#984 connection-manager disconnect cancel.** Touches the shutdown path; needs careful review against the v0.31.3 stdio-MCP lifecycle work.
+- **#888 fs wikilink slug resolution.** Conflicts with master's recent slug-resolution work; needs rebase + re-review.
+
+### To take advantage of v0.36.1.0
+
+`gbrain upgrade` handles this. Most fixes apply on next CLI invocation. The `/admin` embed fix and the schema-bootstrap fixes activate after the binary is replaced — `gbrain upgrade` does that automatically.
+
+Verify:
+```bash
+gbrain doctor --json | jq '.status'  # should be "ok"
+gbrain config show                   # confirm `provider`/`model` translated to `embedding_model` if you had the legacy shape
+gbrain --version                     # should be 0.36.1.0
+```
+
+If `gbrain doctor` still warns about anything after upgrade, please file an issue with the JSON output and your starting schema_version.
+
+### Acknowledgments
+
+Real appreciation for the community on this release. The bug-report volume was a strong signal — it's how we knew which structural fixes to prioritize. Contributors credited inline above and in `Co-Authored-By:` trailers on each commit: @100yenadmin, @aadachi, @Aashiqe10, @amreshtech, @ArshyaAI, @bnc-ss, @clarajohan, @Cossackx, @curtitoo, @DF-FrancoOS, @DmitryBMsk, @hesong12, @hnshah, @jatenner, @jeremyknows, @jeunessima, @johnybradshaw, @joshwilks111-max, @kkroo, @kyledeanjackson, @lubos-buracinsky, @lukejduncan, @mnuradli1, @mvanhorn, @navin-moorthy, @nezovskii, @p3ob7o, @panda850819, @rvdlaar, @sanaxr0001-tech, @seungsu-kr (legacy v0.31.3 stdio lifecycle), @sergeclaesen, @sharziki, @skalingclouds, @sliday, @SunOpt, @tkhattar14, @vincedk-alt, @yashkot007, @zzdisturbed.
+
+### Itemized changes
+
+#### Fixed
+
+- `src/commands/sync.ts` — Terraform / HCL extensions (`.tf`, `.tfvars`, `.hcl`) now in `CODE_EXTENSIONS`; previously invisible to `gbrain sync --strategy code`. Closes #878.
+- `src/commands/upgrade.ts` — `resolveBunGlobalRoot()` finds Bun's global install root via `$BUN_INSTALL` or `~/.bun/install/global`. Closes #1029. PR #1032.
+- `src/commands/config.ts` — `isSensitiveConfigKey()` + `redactConfigValue()` are the single source of truth for `show` and `set`; word-boundary regex avoids `monkey` false-positives. Closes #892.
+- `src/core/oauth-provider.ts` — `verifyAccessToken` throws `InvalidTokenError` on expired + invalid bearer; SDK middleware returns 401 not 500. Closes #935. PR #1012.
+- `src/commands/serve-http.ts` — `GET /mcp` returns 405 with `Allow: POST, DELETE` per MCP Streamable HTTP spec. PR #1076.
+- `src/commands/doctor.ts` — `resolveWhoknowsFixturePath()` walks from `import.meta.url` for source-repo signature; honors `GBRAIN_WHOKNOWS_FIXTURE_PATH` env override. Closes #969. PR #1034.
+- `src/commands/frontmatter.ts` + `src/core/brain-writer.ts` — `createFrontmatterBackup()` + `makeFrontmatterBackupRunId()`; backups land under `~/.gbrain/backups/frontmatter/`. Closes #902. PR #903.
+- `src/core/config.ts` — `path.isAbsolute()` and dual-separator `..` check for `GBRAIN_HOME` on Windows. Closes #1019. PR #1083.
+- `src/core/ai/gateway.ts` — `warnRecipesMissingBatchTokens()` filters to recipes whose provider id is referenced in `embedding_model` / `embedding_multimodal_model`. PR #1117.
+- `src/commands/sync.ts` — `hasOriginRemote()` probe; skip git pull when no `origin` remote. PR #1119.
+- `src/cli.ts` + `src/core/search/hybrid.ts` — `awaitPendingSearchCacheWrites()` drains in-flight cache writes before CLI exit. PR #1125.
+- `src/commands/backlinks.ts` — dedupe `(source, target)` pairs within a single source page. Closes #967. PR #967.
+- `src/core/cycle.ts` — backlinks phase runs in `check` mode during dream/autopilot. PR #1027.
+- `src/commands/autopilot.ts` — wrapper script sources `~/.zshenv` before `~/.zshrc`. PR #966.
+- `src/commands/apply-migrations.ts` — `process.exit(0)` on list / dry-run / up-to-date paths. PR #1062.
+- `src/commands/sync.ts` — `buildAutoEmbedArgs(slugs, sourceId)` threads `--source` to incremental auto-embed. PR #1120.
+- `src/cli.ts:parseOpArgs` — `--no-<key>` flips boolean param false; `query` op honors per-call `source_id` over `ctx.sourceId`. PR #1124.
+- `src/commands/doctor.ts` — `childTableOrphansCheck()` scans 10 FK columns across 8 tables for orphan rows; cascade-violation diagnostic with paste-ready cleanup SQL. Closes #1063. PR #1064.
+- `src/commands/autopilot.ts` + `src/core/cycle.ts` — autopilot trips circuit breaker only on `failed`; orphans phase uses ratio threshold (`count / total_pages > 0.5`) not absolute. PR #1113.
+- `src/core/ai/gateway.ts` — `embedSubBatch` validates response length AND per-embedding dim; partial responses throw before indexing. Closes #925. PR #926.
+- `src/commands/serve-http.ts` — admin register-client honors `grantTypes`, `redirectUris`, `tokenEndpointAuthMethod: 'none'` (PKCE public clients). PR #1077.
+- `src/core/cycle/extract-facts.ts` — `opts.slugs !== undefined` check; empty array is a no-op. Closes #1096.
+- `src/commands/serve-http.ts` + `src/admin-embedded.ts` + `scripts/build-admin-embedded.ts` + `scripts/check-admin-embedded.sh` — auto-generated manifest of admin/dist embedded via `with { type: 'file' }`; two-tier resolution (dev cwd vs binary). Closes #1090.
+- `test/source-id-routing.test.ts` — 6 PGLite regression cases for `importFromContent({sourceId})`. Locks in #891, #978, #1078.
+- `src/commands/migrations/v0_11_0.ts` + `src/commands/apply-migrations.ts` — Phase A routes in-process for PGLite; pre-flight schema-version warning skips PGLite. Closes #1100.
+- `src/commands/serve-http.ts` — `GBRAIN_ADMIN_BOOTSTRAP_TOKEN` env override with `^[A-Za-z0-9_-]{32,}$` validation; `--suppress-bootstrap-token` flag. Closes #1024.
+- `src/core/config.ts` — `migrateLegacyEmbeddingConfig()` translates legacy `provider` + `model` shape to `embedding_model: <provider>:<model>` with stderr nudge. Closes #1086.
+- `test/brain-writer.test.ts` — assertion updated for centralized backup path (CI green).
+
+#### Maintenance
+
+- `test/upgrade.serial.test.ts` — renamed from `upgrade.test.ts`; quarantined for `process.env` mutation pattern per the test-isolation lint. Follow-up: migrate to `withEnv()` helper.
+
+### What was already shipped on master (closed as duplicates)
+
+#### Phase 1 close pass — 22 PRs + 14 issues closed with thank-you comments
+
+- **Cluster A** (v0.35.3.0): 11 PRs + 6 issues all reporting `extract_facts.entity_hints` array-schema items missing. The shared `paramDefToSchema` mapper in `src/mcp/tool-defs.ts` is now the single source of truth across stdio MCP, HTTP MCP, and the subagent registry; `test/mcp-tool-defs.test.ts` enforces structurally. (#904, #907, #910, #979, #980, #999, #1028, #1043, #1049, #1057, #1084, #1103, #806, #831, #833, #911, #1042, #1048.)
+- **Cluster B** (v0.35.3.0): 3 PRs + 2 issues on `--no-recurse-submodules` flag placement. `GIT_SSRF_FLAGS` (global config, before verb) is now distinct from `GIT_SSRF_SUBCOMMAND_FLAGS` (subcommand flags, after verb); position-anchored regression guard in `test/git-remote.test.ts`. (#963, #985, #1020, #1023, #1104, #800, #813.)
+- **Cluster C** (v0.35.5.0): 3 PRs + 2 issues on `oauth_clients` bootstrap. `applyForwardReferenceBootstrap` covers `files.source_id`, `files.page_id`, `oauth_clients.source_id`, `oauth_clients.federated_read`, `sources.archived/_at/_expires_at` before SCHEMA_SQL replay. `test/schema-bootstrap-coverage.test.ts` parses migrate.ts at PR time and fails the suite if any `(table, column)` pair isn't covered. (#1017, #1045, #1115, #1116, #974, #1018, #1092.)
+- **Cluster D singletons**: orphans soft-delete (v0.35.5.0), doctor `node_modules` walker (v0.35.5.0 `pruneDir`), Voyage 2048d `output_dimension` (v0.33.1.1 PR #962), doctor stale verb names (v0.31.7). (#922, #1033, #799, #865, #835, #1021.)
+- **Cluster E troll**: #1114 closed and locked.
+- **PRs absorbed by structural fixes**: #1050 (doctor crash count — v0.35.5.0 `summarizeCrashes()`), #1054 (schema v44→v45 wedge — v0.35.5.0 bootstrap extension), #1065 (embed PGLite hang — v66 partial index).
+
 ## [0.36.0.0] - 2026-05-17
 
 **Skillpacks are scaffolding now, not amber. Scaffold once, own the files, fork freely.**
