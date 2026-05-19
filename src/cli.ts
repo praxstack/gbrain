@@ -169,6 +169,10 @@ async function main() {
     const result = JSON.parse(JSON.stringify(rawResult));
     const output = formatResult(op.name, result);
     if (output) process.stdout.write(output);
+    if (op.name === 'query') {
+      const { awaitPendingSearchCacheWrites } = await import('./core/search/hybrid.ts');
+      await awaitPendingSearchCacheWrites();
+    }
   } catch (e: unknown) {
     if (e instanceof OperationError) {
       console.error(`Error [${e.code}]: ${e.message}`);
@@ -450,7 +454,7 @@ export function resolveQueryImage(
   return { path: imagePath, base64, mime };
 }
 
-function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
+export function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
   const params: Record<string, unknown> = {};
   const positional = op.cliHints?.positional || [];
   let posIdx = 0;
@@ -458,6 +462,14 @@ function parseOpArgs(op: Operation, args: string[]): Record<string, unknown> {
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if (arg.startsWith('--')) {
+      if (arg.startsWith('--no-')) {
+        const positiveKey = arg.slice(5).replace(/-/g, '_');
+        const positiveDef = op.params[positiveKey];
+        if (positiveDef?.type === 'boolean') {
+          params[positiveKey] = false;
+          continue;
+        }
+      }
       const key = arg.slice(2).replace(/-/g, '_');
       const paramDef = op.params[key];
       if (paramDef?.type === 'boolean') {
