@@ -20,8 +20,9 @@ What ships in this release: one new command that does the whole loop for you.
     gbrain doctor --remediate --yes --target-score 90 --max-usd 5
 
 The first prints what would be fixed. The second actually fixes it, one job at
-a time, in dependency order, with a money cap so a synthesize loop can't burn
-$100 of Anthropic credits while you're at lunch. Autopilot (`gbrain autopilot
+a time, in dependency order, with a spend cap so a synthesize loop can't run
+up your Anthropic bill while you're at lunch. The cap is yours to set per run;
+the plan shows the estimate before you commit. Autopilot (`gbrain autopilot
 --install`) does the same thing automatically on its existing 5-minute tick —
 small problems get a targeted handler, big problems get the full cycle, and a
 healthy brain just sleeps.
@@ -33,14 +34,16 @@ healthy brain just sleeps.
   --remediate` figures out the order from a stable dependency graph and walks
   it sequentially with a re-check between every step.
 - **Cron can drive brain maintenance without supervision.** Pass `--yes
-  --max-usd 5` and it runs unattended. Per-job idempotency keys are
-  content-hashed, so if a job fails the next pass retries with a bumped suffix
-  instead of silently re-serving the dead row.
-- **Cost shows up before you commit.** The plan output prints
+  --max-usd 5` (or whatever cap you're comfortable with) and it runs
+  unattended. Per-job idempotency keys are content-hashed, so if a job fails
+  the next pass retries with a bumped suffix instead of silently re-serving
+  the dead row.
+- **Spend shows up before you commit.** The plan output prints
   `est_total_usd_cost` and refuses to submit when it exceeds `--max-usd`.
   Synthesize / patterns / consolidate carry real Anthropic estimates from
   `anthropic-pricing.ts`; embed carries OpenAI / Voyage estimates from
-  `embedding-pricing.ts`.
+  `embedding-pricing.ts`. Pick the cap that fits your wallet — the loop
+  won't run past it.
 - **Empty brains stop spinning forever.** If your brain is markdown-only
   (no entity pages) or your embedding API key isn't configured, `--remediate`
   computes a `max_reachable_score` ceiling and refuses to run when your target
@@ -54,15 +57,17 @@ healthy brain just sleeps.
 - **Autopilot stops over-running healthy brains.** On a brain at score 95+
   with nothing to fix, autopilot sleeps for 60 minutes between full cycles
   instead of grinding through synthesize+patterns+embed every 5 minutes. Real
-  work gets done on degraded brains; healthy brains stop burning cycles.
+  work gets done on degraded brains; healthy brains stop spending tokens on
+  work that has nothing to do.
 - **Eleven new things you can submit as background jobs.** `reindex`,
   `repair-jsonb`, `orphans`, `integrity`, `purge`, plus six cycle phases
   (synthesize, patterns, consolidate, extract_facts, resolve_symbol_edges,
   recompute_emotional_weight) that previously only ran as part of the full
   autopilot cycle. Three of these (synthesize, patterns, consolidate) are
   PROTECTED — they can spend Anthropic credits via internal subagent calls,
-  so an MCP-connected agent can't submit them and burn your API budget. Only
-  trusted local callers (CLI, autopilot, doctor --remediate) can.
+  so an MCP-connected agent can't submit them on your behalf. Only trusted
+  local callers (CLI, autopilot, doctor --remediate) can. Your provider bill
+  stays in your hands.
 
 ### How autopilot picks what to run
 
@@ -87,7 +92,7 @@ synthesize-before-patterns, embed-after-consolidate) keep getting exercised.
 | Autopilot tick cost (healthy) | full cycle    | 1 SQL count    |
 | Failed-job replay window      | wait 60 min   | next pass      |
 | MCP can submit synthesize     | yes (silent)  | no (PROTECTED) |
-| Cron with cost cap            | not possible  | `--max-usd 5`  |
+| Cron with spend cap           | not possible  | `--max-usd N`  |
 | --background flag             | not supported | composable     |
 
 ### To take advantage of v0.36.4.0
