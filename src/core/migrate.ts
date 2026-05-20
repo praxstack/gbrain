@@ -3713,6 +3713,84 @@ export const MIGRATIONS: Migration[] = [
         ON pages (last_retrieved_at);
     `,
   },
+  {
+    version: 80,
+    name: 'takes_kind_drop_check',
+    // v0.38 schema-packs wave (T3 + codex T10 fix).
+    //
+    // Pre-v0.38: `takes.kind` was enforced by a DB CHECK constraint
+    // CHECK (kind IN ('fact','take','bet','hunch')) at the original
+    // table-creation migration (v41 / v48 in pre-renumber numbering).
+    // The same closed enum was duplicated as a TS type union.
+    //
+    // v0.38 opens the type surface so schema packs declare allowed kinds
+    // at runtime against the active pack's `annotation` primitive
+    // `takes_kinds:` field. Migration v80 drops the DB CHECK; runtime
+    // validation in src/core/schema-pack/registry.ts takes over.
+    //
+    // Codex F10: dropping the DB CHECK without also widening the TS
+    // type "moves inconsistency around" — old clients and raw SQL could
+    // poison rows that runtime-validate cleanly. Both layers move
+    // together: this migration + src/core/engine.ts + src/core/takes-fence.ts
+    // already widened to `string`.
+    //
+    // Idempotent: `IF EXISTS` on both engines. PGLite supports
+    // ALTER TABLE DROP CONSTRAINT IF EXISTS (standard SQL).
+    //
+    // Rollback contract (codex T17): per-engine atomic. Postgres uses
+    // DDL transaction; PGLite uses WAL fallback. If this fails mid-tx,
+    // the engine rolls back; no partial state.
+    idempotent: true,
+    sql: `
+      ALTER TABLE takes DROP CONSTRAINT IF EXISTS takes_kind_check;
+    `,
+  },
+  {
+    version: 81,
+    name: 'eval_candidates_schema_pack_per_source',
+    // v0.38 schema-packs wave (T4 + T28 + E10 + E11 codex fold).
+    //
+    // Adds `eval_candidates.schema_pack_per_source JSONB` so `gbrain
+    // eval replay` reproduces the EXACT per-source closure that the
+    // captured query ran against. Without this, a year-old replay
+    // against an evolved pack returns different rows than the original
+    // capture — eval becomes a moving target.
+    //
+    // Shape (E11 inline canonical snapshot):
+    //   {
+    //     "<source_id>": {
+    //       "pack_name": "garry-pack",
+    //       "pack_version": "1.2.0",
+    //       "manifest_sha8": "ab12cd34",
+    //       "alias_closure_resolved": {"person": ["person","researcher"], ...}
+    //     },
+    //     ...
+    //   }
+    //
+    // Inline snapshot (E11): captures the FULL resolved alias graph at
+    // query time so replay is self-contained — no dependency on the
+    // pack file still existing in ~/.gbrain/schema-packs/. ~1KB per row
+    // for a typical 50-type pack; ~10MB/year for a heavy user (10K
+    // captured queries). Acceptable storage cost for permanent replay
+    // reliability.
+    //
+    // Codex F8 (replay version-mismatch policy): replay fails closed by
+    // default when captured pack identity drifts from the active. Pass
+    // --use-captured-snapshot flag to replay against the inline closure
+    // anyway.
+    //
+    // Pack identity = `<pack-name>@<version>+<manifest_sha8>` (codex F7).
+    //
+    // ADD COLUMN with no DEFAULT (NULL) is metadata-only on Postgres 11+
+    // and PGLite 17.5; instant on tables of any size. Pre-v0.38 captured
+    // rows have NULL here; replay falls back to active pack with a stderr
+    // warn ("pre-v0.38 capture; assuming current pack matches").
+    idempotent: true,
+    sql: `
+      ALTER TABLE eval_candidates
+        ADD COLUMN IF NOT EXISTS schema_pack_per_source JSONB NULL;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0
