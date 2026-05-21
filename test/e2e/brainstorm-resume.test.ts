@@ -11,12 +11,10 @@
  * This is the codex load-bearing finding — resume must produce correct
  * output, not just "pick up where we left off".
  *
- * Workaround: a pre-existing PGLite schema gap (the brainstorm
- * domain-bank queries reference `page_links` but the embedded schema
- * only defines `links`). We patch the gap inside the test via
- * `CREATE VIEW page_links AS SELECT * FROM links` so the test exercises
- * the real orchestrator. The fix to the schema itself is a separate
- * follow-up filed in TODOS T12.
+ * Schema note: pglite-engine.ts + postgres-engine.ts both query a
+ * `page_links` relation. v0.38 lands the `page_links` VIEW (alias of the
+ * canonical `links` table) in both the embedded PGLite schema bundle and
+ * Postgres migration v81. This test no longer needs a workaround view.
  */
 
 import { describe, test, expect, beforeAll, beforeEach, afterAll, afterEach } from 'bun:test';
@@ -99,11 +97,7 @@ beforeAll(async () => {
   engine = new PGLiteEngine();
   await engine.connect({});
   await engine.initSchema();
-  // Workaround for the pre-existing schema gap: domain-bank.ts +
-  // pglite-engine.ts query `page_links`, but the embedded schema only
-  // defines `links`. The fix to the canonical schema is a follow-up
-  // (TODOS T12). For this test we add a thin view.
-  await engine.executeRaw(`CREATE OR REPLACE VIEW page_links AS SELECT * FROM links`);
+  // page_links view is provided by the embedded schema bundle (v0.38).
   await seedSmallBrain();
 });
 

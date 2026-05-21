@@ -3766,6 +3766,26 @@ export const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    version: 81,
+    name: 'page_links_view_alias',
+    // v0.38 — pglite-engine.ts and postgres-engine.ts both query a relation
+    // named `page_links` (LEFT JOIN page_links pl ON pl.to_page_id = p.id —
+    // see pglite-engine.ts:896 / postgres-engine.ts:959). The canonical
+    // table has always been `links`. This migration installs a `page_links`
+    // VIEW that aliases the table so brains initialized before the v0.38
+    // schema bundle pick up the alias on upgrade.
+    //
+    // Fresh installs already get the view via the embedded schema bundle.
+    // This migration is idempotent (CREATE OR REPLACE VIEW) so re-running
+    // is safe on either engine.
+    //
+    // Discovered during the brainstorm-cathedral wave when the E2E test had
+    // to workaround the missing view to exercise the resume path.
+    sql: `
+      CREATE OR REPLACE VIEW page_links AS SELECT * FROM links;
+    `,
+  },
 ];
 
 export const LATEST_VERSION = MIGRATIONS.length > 0

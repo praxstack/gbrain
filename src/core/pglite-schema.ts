@@ -170,6 +170,15 @@ CREATE INDEX IF NOT EXISTS idx_links_to ON links(to_page_id);
 CREATE INDEX IF NOT EXISTS idx_links_source ON links(link_source);
 CREATE INDEX IF NOT EXISTS idx_links_origin ON links(origin_page_id);
 
+-- v0.38: page_links is the alias the engine queries use (pglite-engine.ts +
+-- postgres-engine.ts both JOIN page_links pl ON pl.to_page_id = p.id). The
+-- alias predates the table-name standardization; the canonical table is
+-- links. Brainstorm domain-bank connection_count tiebreaker and the
+-- doctor link-density score read through this view. Without it, every
+-- query that mentions page_links fails with relation page_links does
+-- not exist, and the affected commands return zero rows.
+CREATE OR REPLACE VIEW page_links AS SELECT * FROM links;
+
 -- ============================================================
 -- tags
 -- ============================================================
