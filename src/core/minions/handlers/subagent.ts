@@ -762,14 +762,20 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
     maxTurns,
     abortSignal: ctx.signal,
     cacheSystem,
-    replayState: priorChatMessages.length > 0
-      ? {
-        priorMessages: priorChatMessages,
-        priorTools: priorToolsByStableKey,
-        nextTurnIdx: priorChatMessages.filter(m => m.role === 'assistant').length,
-        nextMessageIdx,
-      }
-      : undefined,
+    // ALWAYS pass replayState (even on fresh runs) so the gateway loop's
+    // messageIdx counter starts at `nextMessageIdx` (1 on fresh, after the
+    // seed user write above). Without this, the loop defaults to messageIdx=0
+    // on fresh runs and the first onAssistantTurn callback tries to write
+    // role='assistant' at idx 0, colliding with the seed user message at idx 0
+    // (unique constraint on (job_id, message_idx)). Pinned by
+    // test/e2e/subagent-gateway-path.test.ts ("happy path 1-turn" + "write-
+    // ordering invariant").
+    replayState: {
+      priorMessages: priorChatMessages,
+      priorTools: priorToolsByStableKey,
+      nextTurnIdx: priorChatMessages.filter(m => m.role === 'assistant').length,
+      nextMessageIdx,
+    },
     onAssistantTurn: async (turnIdx, messageIdx, blocks, usage, modelStr) => {
       // Convert ChatBlock[] back to ContentBlock-shaped JSONB for persistence.
       // Storing the gateway's provider-neutral shape is the v2 content_blocks
@@ -792,16 +798,26 @@ async function runSubagentViaGateway(args: GatewayRunArgs): Promise<SubagentResu
       heartbeat('llm_call_completed', { turn_idx: turnIdx, tokens: usage });
     },
     onToolCallStart: async (turnIdx, messageIdx, ordinal, toolName, input, providerToolCallId) => {
-      const gbrainToolUseId = randomUUIDv7();
-      await engine.executeRaw(
+      // CRITICAL — read back the canonical gbrain_tool_use_id from RETURNING,
+      // NOT the locally-generated UUID. On crash-replay the (job_id,
+      // message_idx, ordinal) row already exists with the ORIGINAL UUID from
+      // the pre-crash run; the ON CONFLICT DO UPDATE keeps it. If we
+      // returned the freshly-generated `candidateId` instead, the gateway
+      // loop's `replayState.priorTools.get(stableKey)` lookup would miss
+      // because priorTools is keyed by the original UUID — the short-
+      // circuit silently breaks and the tool re-executes. Pinned by
+      // test/e2e/subagent-crash-replay-multi-provider.test.ts.
+      const candidateId = randomUUIDv7();
+      const rows = await engine.executeRaw<{ gbrain_tool_use_id: string }>(
         `INSERT INTO subagent_tool_executions
            (job_id, message_idx, tool_use_id, tool_name, input, status, schema_version, ordinal, gbrain_tool_use_id, provider_id)
          VALUES ($1, $2, $3, $4, $5::jsonb, 'pending', 2, $6, $7, $8)
          ON CONFLICT (job_id, message_idx, ordinal) DO UPDATE
            SET status = subagent_tool_executions.status
-         RETURNING gbrain_tool_use_id::text`,
-        [ctx.id, messageIdx, providerToolCallId, toolName, JSON.stringify(input ?? null), ordinal, gbrainToolUseId, recipeIdFromModel(model)],
+         RETURNING gbrain_tool_use_id::text AS gbrain_tool_use_id`,
+        [ctx.id, messageIdx, providerToolCallId, toolName, JSON.stringify(input ?? null), ordinal, candidateId, recipeIdFromModel(model)],
       );
+      const gbrainToolUseId = rows[0]?.gbrain_tool_use_id ?? candidateId;
       heartbeat('tool_called', { turn_idx: turnIdx, tool_name: toolName });
       return { gbrainToolUseId };
     },
