@@ -12,7 +12,7 @@
  *      single-source brains (where cross_source_hits is always 0).
  *
  *   3. Session diversification (~0.95×): if multiple top-K pages share a
- *      session prefix (e.g. `wintermute/chat/2026-05-20-foo/...`), keep
+ *      session prefix (e.g. `media/chat/2026-05-20-foo/...`), keep
  *      the highest-scoring one at full score and DEMOTE the rest. This
  *      is MMR-lite: the original framing "boost the cluster" was
  *      structurally wrong — the stated motivation was "weak chunks
@@ -161,8 +161,8 @@ export function readRecentGraphSignalsFailures(
 // ===========================================================================
 
 /**
- * Derive the session prefix for a slug. For `wintermute/chat/2026-05-20-foo`
- * returns `wintermute/chat/2026-05-20-foo` (last segment dropped is the
+ * Derive the session prefix for a slug. For `media/chat/2026-05-20-foo`
+ * returns `media/chat/2026-05-20-foo` (last segment dropped is the
  * file itself — actually we want the parent path). Wait — the session is
  * the directory the chat lives in, so the prefix is the slug up to but
  * not including the last `/`. For a slug with no `/` (`'standalone'`),

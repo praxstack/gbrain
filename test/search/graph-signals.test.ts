@@ -56,7 +56,7 @@ const ENGINE_STUB = {} as BrainEngine;
 
 describe('sessionPrefix', () => {
   test('multi-segment slug → strip last segment', () => {
-    expect(sessionPrefix('wintermute/chat/2026-05-20-foo')).toBe('wintermute/chat');
+    expect(sessionPrefix('media/chat/2026-05-20-foo')).toBe('media/chat');
   });
 
   test('single-segment slug → self (no false grouping)', () => {
@@ -198,9 +198,9 @@ describe('applyGraphSignals — cross-source boost (stacks on adjacency)', () =>
 describe('applyGraphSignals — session diversification', () => {
   test('3 results share session prefix → highest keeps full, other 2 demoted', async () => {
     const results = [
-      makeResult('wintermute/chat/2026-05-20/a', 10, 1),
-      makeResult('wintermute/chat/2026-05-20/b', 9, 2),
-      makeResult('wintermute/chat/2026-05-20/c', 7, 3),
+      makeResult('media/chat/2026-05-20/a', 10, 1),
+      makeResult('media/chat/2026-05-20/b', 9, 2),
+      makeResult('media/chat/2026-05-20/c', 7, 3),
     ];
     await applyGraphSignals(results, ENGINE_STUB, {
       enabled: true,
@@ -210,7 +210,7 @@ describe('applyGraphSignals — session diversification', () => {
     const a = results[0];
     expect(a.score).toBe(10);
     expect(a.graph_session_demoted).toBeUndefined();
-    expect(a.graph_session_prefix).toBe('wintermute/chat/2026-05-20');
+    expect(a.graph_session_prefix).toBe('media/chat/2026-05-20');
     // Others demoted.
     expect(results[1].score).toBeCloseTo(9 * SESSION_DEMOTE, 5);
     expect(results[1].graph_session_demoted).toBe(true);
@@ -222,8 +222,8 @@ describe('applyGraphSignals — session diversification', () => {
   test('single-segment slug (no /) → not grouped with others, no false demote', async () => {
     const results = [
       makeResult('standalone', 10, 1),
-      makeResult('wintermute/chat/2026-05-20/a', 9, 2),
-      makeResult('wintermute/chat/2026-05-20/b', 8, 3),
+      makeResult('media/chat/2026-05-20/a', 9, 2),
+      makeResult('media/chat/2026-05-20/b', 8, 3),
     ];
     await applyGraphSignals(results, ENGINE_STUB, {
       enabled: true,
