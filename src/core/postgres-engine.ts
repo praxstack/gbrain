@@ -2124,7 +2124,7 @@ export class PostgresEngine implements BrainEngine {
     return rows.map((r: Record<string, unknown>) => ({
       slug: r.slug as string,
       title: r.title as string,
-      type: r.type as PageType,
+      type: r.type as string,
       depth: r.depth as number,
       links: (typeof r.links === 'string' ? JSON.parse(r.links) : r.links) as { to_slug: string; link_type: string }[],
     }));
@@ -2778,7 +2778,7 @@ export class PostgresEngine implements BrainEngine {
         const claimValue  = input.claim_value  ?? null;
         const claimUnit   = input.claim_unit   ?? null;
         const claimPeriod = input.claim_period ?? null;
-        // v0.40.2.0 — event_type column (Commit 1 migration v87).
+        // v0.40.2.0 — event_type column (Commit 1 migration v89).
         const eventType   = input.event_type   ?? null;
 
         const ins = await tx<Array<{ id: number }>>`

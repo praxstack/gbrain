@@ -664,7 +664,7 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   'facts.claim_value',
   'facts.claim_unit',
   'facts.claim_period',
-  // v0.40.2.0 (migration v87) — event_type column. Same precedent as
+  // v0.40.2.0 (migration v89) — event_type column. Same precedent as
   // facts.claim_metric et al: no forward-reference index in
   // PGLITE_SCHEMA_SQL, no downstream filter breaks on old brains
   // (existing callers — founder-scorecard, eval-trajectory,
@@ -673,6 +673,14 @@ const COLUMN_EXEMPTIONS = new Set<string>([
   // brains is invisible to them). Migration is column-only, no FK,
   // no index — bootstrap probe would be pure overhead.
   'facts.event_type',
+  // v0.39.1.0 (migration v88) — schema-pack provenance per-source captured as
+  // inline canonical closure snapshot on every eval_candidates row. NULL by
+  // default; no index in PGLITE_SCHEMA_SQL references it. Migration handles
+  // both fresh installs and pre-existing brains via ADD COLUMN IF NOT EXISTS.
+  // Schema-pack codegen (scripts/generate-gbrain-base.ts) consumes the value
+  // only via the eval-replay CLI, not via SQL filters that would force a
+  // bootstrap probe.
+  'eval_candidates.schema_pack_per_source',
 ]);
 
 test('every ALTER TABLE ADD COLUMN in MIGRATIONS is covered by applyForwardReferenceBootstrap (column-only class)', async () => {
