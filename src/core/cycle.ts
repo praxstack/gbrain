@@ -165,6 +165,7 @@ export const PHASE_SCOPE: Record<CyclePhase, PhaseScope> = {
   embed: 'global',
   orphans: 'global',
   purge: 'global',
+  'schema-suggest': 'source',
 };
 
 /**
