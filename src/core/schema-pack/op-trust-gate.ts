@@ -81,7 +81,45 @@ export async function loadActivePackForOp(
 ): Promise<ResolvedPack> {
   const perCall = validateSchemaPackTrustGate(ctx, params.schema_pack);
   const scope = sourceScopeOpts(ctx);
-  const sourceId = scope.sourceId ?? (scope.sourceIds?.[0]);
+  // v0.39 T19 + codex finding #2: pre-fix this collapsed sourceIds[] to
+  // the FIRST entry, which is arbitrary pack selection for a federated
+  // read. The correct behavior is: when federated_read is in play and
+  // sources have divergent active packs, REJECT the request with a
+  // permission_denied error pointing at v0.40+ per-source closure work.
+  // Single-source reads (scope.sourceId scalar) keep the v0.34.1 semantics.
+  let sourceId: string | undefined;
+  if (scope.sourceIds && scope.sourceIds.length > 0) {
+    if (scope.sourceIds.length === 1) {
+      sourceId = scope.sourceIds[0];
+    } else {
+      // Multi-source federated read: compare resolved pack names per
+      // source. If they all agree, use the first; if they diverge, fail
+      // closed with a permission_denied to surface the drift instead of
+      // arbitrary pack selection.
+      const { resolveActivePackName } = await import('./registry.ts');
+      const cfg = loadConfig();
+      const packNames = new Set<string>();
+      for (const sid of scope.sourceIds) {
+        const res = resolveActivePackName({
+          remote: ctx.remote ?? true,
+          envVar: process.env.GBRAIN_SCHEMA_PACK?.trim() || undefined,
+          sourceId: sid,
+          homeConfig: cfg?.schema_pack?.trim() || undefined,
+        });
+        packNames.add(res.pack_name);
+      }
+      if (packNames.size > 1) {
+        throw new SchemaPackTrustGateError(
+          `Federated read across ${scope.sourceIds.length} sources resolves to ${packNames.size} distinct packs (${[...packNames].join(', ')}). ` +
+          `Per-source closure across mounts ships in v0.40+. Until then, ` +
+          `register an OAuth client scoped to a single source OR have the sources agree on one pack.`,
+        );
+      }
+      sourceId = scope.sourceIds[0];
+    }
+  } else {
+    sourceId = scope.sourceId;
+  }
   const input: LoadActivePackInput = {
     cfg: loadConfig(),
     remote: ctx.remote ?? true, // fail-closed default

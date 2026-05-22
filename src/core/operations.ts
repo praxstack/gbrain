@@ -609,6 +609,45 @@ const put_page: Operation = {
       ...(activePack ? { activePack } : {}),
     });
 
+    // v0.39 T13 — auto-prompt on first unknown-type write.
+    //
+    // Contract (codex finding #8 honored — 7 cases covered):
+    //   - TTY callers: stderr prompt fires once per unique unknown type;
+    //     subsequent writes with the same type silently append to
+    //     candidate audit.
+    //   - Non-TTY callers: ALWAYS succeed; silently append to candidate
+    //     audit. NEVER block. Critical regression test:
+    //     test/put-page-unknown-type-prompt.test.ts pins this.
+    //   - Subagent / MCP / claw-test / autopilot all go through here;
+    //     non-TTY contract preserves their semantics.
+    //   - Pack-load failures (activePack undefined) skip the gate entirely
+    //     since "unknown" has no meaning without a pack reference.
+    if (activePack && result.status === 'imported') {
+      try {
+        const pageType = (result as { page?: { type?: string } }).page?.type ?? null;
+        const knownTypes = new Set(activePack.page_types.map((t) => t.name));
+        if (pageType && !knownTypes.has(pageType)) {
+          const { logSchemaEvent } = await import('./schema-events.ts');
+          logSchemaEvent({
+            verb: 'put_page:unknown_type',
+            outcome: 'success',
+            flags: [`type=${pageType.slice(0, 32)}`, `slug=${slug.slice(0, 64)}`],
+          });
+          // TTY-only stderr prompt. Non-TTY caller (MCP, autopilot,
+          // claw-test) sees only the silent audit append above. The
+          // prompt is informational — NEVER blocks the write.
+          if (process.stderr.isTTY && ctx.remote === false) {
+            console.error(
+              `[schema] put_page wrote type=\`${pageType}\` which isn't in active pack \`${activePack.page_types.length ? '<configured>' : 'gbrain-base'}\`. ` +
+              `Run \`gbrain schema review-candidates\` to promote or ignore.`,
+            );
+          }
+        }
+      } catch {
+        // best-effort; never block put_page
+      }
+    }
+
     // Auto-link post-hook: runs AFTER importFromContent (which is its own
     // transaction). Runs even on status='skipped' so reconciliation catches drift
     // between the page text and the links table. Failures are non-blocking.
