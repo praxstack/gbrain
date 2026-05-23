@@ -215,7 +215,15 @@ export async function importFromContent(
      */
     forceRechunk?: boolean;
     /**
-     * v0.38.3.0 provenance write-through (WARN-8). When set, threaded to
+     * v0.39.0.0 T1.5: active schema pack for type inference. When set, parseMarkdown
+     * uses the pack's path_prefixes instead of the hardcoded gbrain-base table.
+     * When unset, falls back to pre-v0.39 behavior (parity gate stays green).
+     * Callers thread this from `loadActivePack(ctx)` once per command —
+     * NEVER per file inside sync (codex perf finding #7).
+     */
+    activePack?: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> };
+    /**
+     * v0.39.3.0 provenance write-through (WARN-8). When set, threaded to
      * `tx.putPage` so the page's `source_kind`, `source_uri`,
      * `ingested_via` DB columns get populated. The trust gate lives at the
      * `put_page` op layer — by the time importFromContent sees these, the
@@ -248,7 +256,7 @@ export async function importFromContent(
     };
   }
 
-  const parsed = parseMarkdown(content, slug + '.md');
+  const parsed = parseMarkdown(content, slug + '.md', { activePack: opts.activePack });
 
   // v0.38.3.0 CV8 — DB content_hash excludes timestamp-bearing frontmatter
   // keys so identical body content from `gbrain capture` (which stamps
@@ -450,7 +458,18 @@ export async function importFromFile(
   engine: BrainEngine,
   filePath: string,
   relativePath: string,
-  opts: { noEmbed?: boolean; inferFrontmatter?: boolean; sourceId?: string; forceRechunk?: boolean } = {},
+  opts: {
+    noEmbed?: boolean;
+    inferFrontmatter?: boolean;
+    sourceId?: string;
+    forceRechunk?: boolean;
+    /**
+     * v0.39 T1.5: active schema pack threaded through to importFromContent so
+     * `parseMarkdown` uses pack-driven type inference. Load ONCE per command;
+     * never per file (codex perf finding #7).
+     */
+    activePack?: { page_types: ReadonlyArray<{ name: string; path_prefixes: ReadonlyArray<string> }> };
+  } = {},
 ): Promise<ImportResult> {
   // Defense-in-depth: reject symlinks before reading content.
   const lstat = lstatSync(filePath);
@@ -487,7 +506,7 @@ export async function importFromFile(
     }
   }
 
-  const parsed = parseMarkdown(content, relativePath);
+  const parsed = parseMarkdown(content, relativePath, { activePack: opts.activePack });
 
   // Enforce path-authoritative slug. parseMarkdown prefers frontmatter.slug over
   // the path-derived slug, so a mismatch here means the frontmatter is trying
@@ -675,7 +694,7 @@ export async function importCodeFile(
     if (existing) await tx.createVersion(slug, txOpts);
 
     await tx.putPage(slug, {
-      type: 'code' as PageType,
+      type: 'code' as string,
       page_kind: 'code',
       title,
       compiled_truth: content,
