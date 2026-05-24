@@ -4287,7 +4287,23 @@ export async function buildChecks(
        SELECT 'fallback_with_fm_date' AS kind, COUNT(*)::text AS count
          FROM sample
         WHERE effective_date_source = 'fallback'
-          AND (frontmatter ? 'event_date' OR frontmatter ? 'date' OR frontmatter ? 'published')
+          AND (
+            (frontmatter ? 'event_date' AND frontmatter->>'event_date' IS NOT NULL AND frontmatter->>'event_date' <> '')
+            OR (frontmatter ? 'date' AND frontmatter->>'date' IS NOT NULL AND frontmatter->>'date' <> '')
+            OR (frontmatter ? 'published' AND frontmatter->>'published' IS NOT NULL AND frontmatter->>'published' <> '')
+          )
+          -- v0.40.x bug-fix (Prax custom 2026-05-24): templater placeholders
+          -- like {{date}}, <% tp.date.now('YYYY-MM-DD') %>, dollar-curly-date
+          -- are legitimately unparseable. Don't flag them as 'fallback
+          -- despite parseable date' — they have NO parseable date by design.
+          AND NOT (
+            COALESCE(frontmatter->>'date', '') LIKE '%{{%'
+            OR COALESCE(frontmatter->>'date', '') LIKE '%<%%'
+            OR COALESCE(frontmatter->>'event_date', '') LIKE '%{{%'
+            OR COALESCE(frontmatter->>'event_date', '') LIKE '%<%%'
+            OR COALESCE(frontmatter->>'published', '') LIKE '%{{%'
+            OR COALESCE(frontmatter->>'published', '') LIKE '%<%%'
+          )
        UNION ALL
        SELECT 'future_dated', COUNT(*)::text FROM sample
         WHERE effective_date IS NOT NULL AND effective_date > NOW() + INTERVAL '1 year'
