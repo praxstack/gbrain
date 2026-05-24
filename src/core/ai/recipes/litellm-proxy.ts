@@ -40,6 +40,31 @@ export const litellmProxy: Recipe = {
       // mismatched-dim responses pre-storage).
       supports_multimodal: true,
     },
+    // Prax custom 2026-05-24: chat touchpoint added to make brainstorm/lsd/think
+    // reach LiteLLM-proxied chat completions (e.g. Bedrock Claude via LiteLLM
+    // alias). LiteLLM's `/v1/chat/completions` endpoint is OpenAI-compatible
+    // and forwards to whatever the user's litellm config.yaml maps each model
+    // ID to (Bedrock, Vertex, OpenAI, Anthropic-direct, etc.). No model
+    // whitelist: openai-compat tier accepts arbitrary IDs at runtime; the
+    // proxy returns the actual model error if the ID is unknown.
+    chat: {
+      // Empty model list: LiteLLM's catalog is user-defined. Surface to the
+      // wizard via user_provided_models; users pass `litellm:<their-alias>`.
+      models: [],
+      user_provided_models: true,
+      supports_tools: true,
+      // INFORMATIONAL: real gate is isAnthropicProvider() in
+      // src/core/model-config.ts which hard-pins gbrain's subagent infra to
+      // Anthropic-direct (stable tool_use_id across crashes/replays).
+      // LiteLLM-proxied Anthropic is rejected at submit time regardless.
+      supports_subagent_loop: false,
+      // LiteLLM doesn't currently expose Anthropic prompt-caching headers
+      // through the OpenAI-compat envelope (as of 2026-05). Conservative.
+      supports_prompt_cache: false,
+      // No max_context_tokens / cost_per_1m: depend entirely on which model
+      // the user's LiteLLM is fronting. Let upstream errors surface.
+      price_last_verified: '2026-05-24',
+    },
   },
   setup_hint: 'Run LiteLLM (https://docs.litellm.ai) in front of any provider; set LITELLM_BASE_URL + pass --embedding-model litellm:<model> and --embedding-dimensions <N>.',
 };
