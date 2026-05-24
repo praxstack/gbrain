@@ -974,7 +974,8 @@ function instantiateEmbedding(recipe: Recipe, modelId: string, cfg: AIGatewayCon
         `OpenAI embedding requires OPENAI_API_KEY.`,
         recipe.setup_hint,
       );
-      const client = createOpenAI({ apiKey });
+      const baseURL = cfg.env.OPENAI_BASE_URL;
+      const client = createOpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) });
       // AI SDK v6: use .textEmbeddingModel() for embeddings
       return (client as any).textEmbeddingModel
         ? (client as any).textEmbeddingModel(modelId)
