@@ -3945,7 +3945,13 @@ export class PostgresEngine implements BrainEngine {
     // is working as intended, not an orphan.
     const [h] = await sql`
       WITH entity_pages AS (
-        SELECT id, slug FROM pages WHERE type IN ('person', 'company')
+        -- v0.40.x bug: was IN ('person', 'company') only; doctor's
+        -- entity_count query uses the broader set. Mismatch caused
+        -- graph_coverage to read 0% on brains that have entity-typed
+        -- or organization-typed pages but no person/company pages
+        -- (PraxVault has 149 'entity' pages, 0 'person'/'company').
+        -- Aligned with doctor.ts entity_count definition (Prax custom 2026-05-24).
+        SELECT id, slug FROM pages WHERE type IN ('entity', 'person', 'company', 'organization')
       )
       SELECT
         (SELECT count(*) FROM pages) as page_count,
@@ -3976,7 +3982,7 @@ export class PostgresEngine implements BrainEngine {
       SELECT p.slug,
              (SELECT count(*) FROM links l WHERE l.from_page_id = p.id OR l.to_page_id = p.id)::int as link_count
       FROM pages p
-      WHERE p.type IN ('person', 'company')
+      WHERE p.type IN ('entity', 'person', 'company', 'organization')
       ORDER BY link_count DESC
       LIMIT 5
     `;
