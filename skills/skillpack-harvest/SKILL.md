@@ -13,6 +13,13 @@ triggers:
   - "lift this skill upstream"
   - "share this skill with other gbrain clients"
   - "promote my skill to gbrain"
+  # Broader triggers (added 2026-05-24 to fix 7 routing-eval misses):
+  - "into gbrain"
+  - "into the gbrain bundle"
+  - "into gbrain core"
+  - "this skill in the gbrain bundle"
+  - "this skill upstream"
+  - "skill upstream"
 mutating: true
 writes_pages: false
 writes_to:
