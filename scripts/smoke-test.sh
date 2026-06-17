@@ -93,9 +93,12 @@ fi
 
 # ── 3. GBrain database ────────────────────────────────────
 if [ -n "$DB_URL" ] && [ -n "$GBRAIN_DIR" ] && [ -n "$BUN_PATH" ]; then
-  DOCTOR_OUT=$(DATABASE_URL="$DB_URL" GBRAIN_DATABASE_URL="$DB_URL" timeout 20 "$BUN_PATH" run "$GBRAIN_DIR/src/cli.ts" doctor 2>&1)
-  if echo "$DOCTOR_OUT" | grep -q "Health score\|brain_score\|Health Check"; then
-    SCORE=$(echo "$DOCTOR_OUT" | grep -oP 'Health score: \K[0-9]+' || echo '?')
+  DOCTOR_OUT=$(DATABASE_URL="$DB_URL" GBRAIN_DATABASE_URL="$DB_URL" timeout 20 "$BUN_PATH" run "$GBRAIN_DIR/src/cli.ts" doctor --json 2>&1)
+  # Score field: --json emits "health_score":N (older text output used "Health score: N"). Portable extraction (no grep -P / BSD-safe).
+  SCORE=$(echo "$DOCTOR_OUT" | sed -n 's/.*"health_score"[ ]*:[ ]*\([0-9][0-9]*\).*/\1/p' | head -1)
+  [ -z "$SCORE" ] && SCORE=$(echo "$DOCTOR_OUT" | sed -n 's/.*Health score: \([0-9][0-9]*\).*/\1/p' | head -1)
+  if echo "$DOCTOR_OUT" | grep -q '"health_score"\|Health score\|brain_score\|Health Check'; then
+    [ -z "$SCORE" ] && SCORE='?'
     pass "GBrain database (health score: $SCORE/100)"
   else
     fail "GBrain database — doctor returned no health data"
