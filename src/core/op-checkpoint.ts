@@ -179,19 +179,29 @@ export async function recordCompleted(
   // REPLACE semantics (kept deliberately — #1794 V3). Callers like
   // extract-conversation-facts serialize a MUTABLE map through here and rely on
   // stale keys being REMOVED; an append would make them unremovable. The full
-  // set lands in the parent `completed_keys` JSONB column via a single UPSERT —
-  // exactly as before. JSON.stringify into `$3::jsonb` is correct (the text→jsonb
-  // cast yields a proper array; NOT the double-encode trap, which is the template
-  // form). Sync uses `appendCompleted` (below) instead, never this.
+  // set lands in the parent `completed_keys` JSONB column via a single UPSERT.
+  //
+  // jsonb binding: pass the JS string[] as a Postgres text[] param and convert
+  // with `to_jsonb($3::text[])`, which yields a proper JSONB array (jsonb_typeof
+  // = 'array'). The previous form — `JSON.stringify(sorted)` bound to `$3::jsonb`
+  // — IS the double-encode trap: postgres.js's positional `conn.unsafe` binds the
+  // stringified value as TEXT, so `::jsonb` casts the JSON-string text into a
+  // JSONB *string* (jsonb_typeof = 'string'), which violates the
+  // `op_checkpoints_completed_keys_array` CHECK (migration v119) and aborts the
+  // write — exactly the same double-encode failure documented on the `sources.config`
+  // UPDATE in postgres-engine.ts. `to_jsonb($3::text[])` is portable across the
+  // Postgres (conn.unsafe) and PGLite (db.query) engines, which both bind a JS
+  // array to a `$N::text[]` param natively. Sync uses `appendCompleted` (below)
+  // instead, never this.
   const sorted = [...keys].sort();
   return durableWrite(engine, key, 'write', () =>
     engine.executeRawDirect(
       `INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
-       VALUES ($1, $2, $3::jsonb, now())
+       VALUES ($1, $2, to_jsonb($3::text[]), now())
        ON CONFLICT (op, fingerprint) DO UPDATE
          SET completed_keys = EXCLUDED.completed_keys,
              updated_at     = now()`,
-      [key.op, key.fingerprint, JSON.stringify(sorted)],
+      [key.op, key.fingerprint, sorted],
     ));
 }
 
