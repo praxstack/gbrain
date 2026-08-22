@@ -1,5 +1,88 @@
 # TODOS
 
+## Daemon env-file lane follow-ups (#2608 / #4443 takeover, filed 2026-08-21)
+
+- [ ] **P3 — Fix the stale `config set` DB-plane claim in the install docs.**
+  **What:** `INSTALL_FOR_AGENTS.md` and `docs/INSTALL.md` say `gbrain config set`
+  "writes the DB plane, which the provider pipeline never reads" — but
+  `src/commands/config.ts` (FILE_PLANE_API_KEYS, ~line 259) routes API keys to
+  the file plane (routed, not refused), which `mergedProviderEnv` folds.
+  **Why:** the docs teach a prohibition whose stated rationale is no longer
+  true; either document the routing or remove the scare. **Where to start:**
+  `src/commands/config.ts` FILE_PLANE_API_KEYS; both install docs; regen
+  `bun run build:llms`. **Effort:** S.
+
+- [ ] **P3 — Refresh file-plane keys in the autopilot tick.** **What:** call
+  `refreshGatewayEnvFromFilePlane()` (`src/core/ai/gateway.ts:~497`, today only
+  called from `src/commands/jobs.ts`) from the autopilot tick so a key added to
+  `~/.gbrain/config.json` after boot is picked up without a daemon reload.
+  **Why:** shrinks the restart-required window the #2608 boot warning documents.
+  **Where to start:** autopilot tick body next to the existing health probe.
+  **Effort:** S.
+
+- [ ] **P3 — Doctor check for a stale (pre-env-lane) daemon wrapper.** **What:**
+  a doctor check that reads `<gbrainDir>/autopilot-run.sh` and warns when it
+  lacks the env-file sourcing line (installed before v0.46.2x, binary upgraded,
+  wrapper never regenerated). **Why:** self-upgrade swaps the binary but never
+  the wrapper; the boot warning covers the no-key case, doctor should cover the
+  wrapper-drift case. **Where to start:** `src/commands/doctor.ts` filesystem
+  checks; `writeWrapperScript` in `src/commands/autopilot.ts`. **Effort:** S.
+
+- [ ] **P3 — launchd/systemd log paths ignore `GBRAIN_HOME`.** **What:**
+  `generateLaunchdPlist` and `generateSystemdUnit` hardcode
+  `~/.gbrain/autopilot.{log,err}` (`src/commands/autopilot.ts` plist/unit
+  templates) while the wrapper, lock, and env file all resolve through
+  `gbrainPath()`. **Why:** on a `GBRAIN_HOME` install the daemon's diagnostics
+  land in a different directory than every doc and status command names —
+  pre-existing, but the #2608 boot warning is the first feature whose
+  remediation depends on users finding autopilot.log. **Where to start:** the
+  two generators + `showStatus` log-tail readers. **Effort:** M (migration for
+  existing installs).
+
+- [ ] **P3 — In-process env-file fold for foreground/doctor parity.** **What:**
+  parse simple `KEY=value` lines of `<gbrainDir>/env` before `configureGateway`
+  (`src/cli.ts:~3298`) so foreground runs and doctor see the same keys the
+  daemon wrapper sources. **Why:** today an env-file-only key makes doctor
+  report keyless while the daemon is keyed — the inverse of #2608's trap.
+  Rejected as the PRIMARY fix because process-level vars
+  (`NODE_EXTRA_CA_CERTS`) must exist before boot, which only wrapper sourcing
+  delivers; a parity fold is additive. **Where to start:** `src/cli.ts`
+  connectEngine preamble; reuse the template's grammar (export-optional
+  KEY=value). **Effort:** M.
+
+## Serve-delegated sync follow-ups (v0.46.24.0)
+
+- [ ] **P3 — `sync --all` under delegation.** **What:** delegate a multi-source
+  sync per-source through a live serve. **Why:** v0.46.24.0 refuses `--all`
+  under a live serve — the client has no engine to enumerate sources, and the
+  PGLite fan-out is serial anyway. **Context:** the serve could enumerate its
+  own sources and run per-source delegated jobs sequentially (the runner is
+  single-flight by design), or the client could gain a `sync_sources` IPC kind.
+  Per-source `gbrain sync --source X` delegates today, so this is convenience,
+  not capability. Start: `src/commands/sync-delegate.ts` (the `--all` refusal),
+  `src/core/serve-sync-runner.ts`. Effort: M (CC: S). Priority: P3.
+- [ ] **P3 — `serve --http` sync IPC.** **What:** register the resolve-IPC
+  listener (and the sync kinds) on the HTTP serve path. **Why:** delegation is
+  stdio-serve-only — an HTTP serve still forces stop-the-serve syncs.
+  **Context:** `src/commands/serve-http.ts` is at its module-size cap; the
+  wiring needs its own module. The IPC block in `src/mcp/server.ts:186` is the
+  shape to extract/share. Effort: M (CC: S). Priority: P3.
+- [ ] **P3 — delegated post-sync steps.** **What:** the direct-CLI post-steps
+  (`manageGitignoreAtGitRoot`, the extraction-lag nudge) don't run for
+  delegated syncs. **Why:** both need an engine or repo-adjacent context the
+  client doesn't have; both already have "defer to next clean sync" postures,
+  so nothing breaks — but a brain synced ONLY through delegation never gets
+  the .gitignore management. **Context:** run them serve-side after a done
+  job, or client-side without an engine where possible. Start:
+  `src/core/serve-sync-runner.ts` (post-done hook). Effort: S. Priority: P3.
+- [ ] **P3 — N-process delegation hammer in tests/heavy/.** **What:** a
+  `tests/heavy/serve_sync_delegation.sh` modeled on `sync_lock_regression.sh`:
+  one serve + M concurrent `gbrain sync` clients, assert one delegated job at
+  a time (`busy` for the rest), no leaked lock rows, bounded MCP latency
+  during the run. **Why:** the e2e covers the arc; the hammer covers
+  contention shapes. Effort: M. Priority: P3.
+
+
 ## Key-aware model routing wave follow-ups (filed 2026-08-17; plan: ~/.claude/plans/system-instruction-you-are-working-enchanted-lark.md)
 
 - [ ] **P2 — More providers in `PROVIDER_TIER_DEFAULTS` (+ discovery).** **What:**
@@ -198,7 +281,9 @@
   self-containedness) on a synthetic fixture corpus, following the
   takes-quality 3-judge template + the eval-chronicle deterministic-gold
   pattern; wire `details.synthesis.fallback_reasons` into the receipt.
-  Adjacent: #4198 (synthesize-concepts evaluator stub). **Why:** the
+  Adjacent: #4198 (synthesize-concepts evaluator — v0.46.28.0 made the stub
+  an honest not-implemented exit-1 scaffold; the parity-baseline evaluator
+  itself is still unbuilt). **Why:** the
   oneshot default currently leans on the soak + fallback telemetry; CI
   should catch a quality regression, not output review. **Effort:** L.
   **Priority:** P2.
@@ -359,7 +444,19 @@
 
 - [ ] **P3 — transcript.ts renderBlock still renders v2 gateway blocks as "Unknown block type".** The absorbed #4156 rekeyed the tool ledger to (message_idx, tool_use_id); teaching renderBlock the 'tool-call'/'tool-result' ChatBlock shapes is the remaining half so `gbrain agent logs` shows gateway-path tool use readably. Files: src/core/minions/transcript.ts, test/subagent-transcript.test.ts.
 
-- [ ] **P3 — consolidate the five hand-rolled bounded-wait copies.** Promise.race + setTimeout + clearTimeout now lives in hybrid.ts:151/:898, eval-capture.ts:203, supervisor.ts probeQueueState, telemetry's drain, and pglite-engine's bounded close. A shared `raceBounded(promise, ms)` helper would kill the copy-drift class. Sweep, don't rush — each copy has slightly different timeout/cleanup semantics to preserve.
+- [ ] **P3 — consolidate the five hand-rolled bounded-wait copies.** Promise.race + setTimeout + clearTimeout now lives in hybrid.ts:151/:898, eval-capture.ts:203, supervisor.ts probeQueueState, telemetry's drain, and pglite-engine's bounded close. A shared `raceBounded(promise, ms)` helper would kill the copy-drift class. Sweep, don't rush — each copy has slightly different timeout/cleanup semantics to preserve. NOTE (#4284): the pglite close copy's semantics are now deliberately divergent and load-bearing — timer armed BEFORE the awaited call starts, deliberately REF'D (no unref), delay clamped to 2^31−1 — and are pinned by structural tests in `test/fix-wave-structural.test.ts`; a sweep must preserve (or parameterize) all three, not normalize them away.
+- [ ] **P3 — enable the PGLite disconnect watchdog by default in gbrain's own CI lanes.**
+  **What:** set `GBRAIN_PGLITE_CLOSE_WATCHDOG_MS` (~30s) + `..._GRACE_MS` in the serial/e2e
+  CI lanes (and consider `scripts/run-serial-tests.sh`) after a soak period, so any future
+  #4143-class wedge dies loudly with the `pglite-disconnect-watchdog` stderr label instead
+  of eating the lane's full timeout. **Why:** the watchdog is opt-in (a diagnostic
+  instrument); today only `tests/heavy/read_latency_under_sync.sh` arms it, and the heavy
+  lane runs nightly at best — PR CI wedges would still present as silent timeouts.
+  **Context:** shipped with the #4284 fix; the lethal-knob floor
+  (`max(5000, sinkCount*2000 + closeTimeout + 2000)`) already protects healthy slow
+  teardowns, so the main soak question is worker-spawn overhead per disconnect across
+  thousands of test teardowns, and whether any lane has legitimate >30s disconnects.
+  **Effort:** S. **Priority:** P3.
 
 - [ ] **P2 — Heavy Tests lane gates nothing on in-repo branches.** #4143 shipped broken for a month because the lane comes back `skipped` on branch pushes and only a downstream fork ran it nightly. Either run a bounded subset (the read_latency workload at reduced params) in PR CI, or make the nightly failure page someone. Files: .github/workflows (heavy lane), tests/heavy/.
 
@@ -406,10 +503,12 @@
 - [ ] **P3 — Re-eval community #717 (graph-hop wikilink rerank, claimed +2.6/+2.8
   P@5/R@5) against the post-v0.46.15 ranker** — the concept intent + dedup scope fix
   may have absorbed part of its headroom.
-- [ ] **P2 — #1663 remainder (issue REOPENED at ship): query-shape routing,
-  structural exact-lookup tier, CRAG confidence escalation.** The issue was closed
-  with these three unbuilt; the wave shipped the adjacent pieces (concept intent,
-  autocut weak-top floor, evidence-on-cosine) but deliberately deferred these.
+- [x] **P2 — #1663 remainder: query-shape routing, structural exact-lookup
+  tier, CRAG confidence escalation.** DONE (v0.46.28.0, #4475): all three
+  shipped — `src/core/search/query-intent.ts` (query-shape routing),
+  `src/core/search/exact-lookup.ts` (structural exact-lookup tier), and
+  `src/core/search/crag.ts` (CRAG escalation seam, config-gated, default off,
+  experimental). Issue closed.
 - [ ] **P3 — Positive underfill-event coverage for searchVector escalation.** The
   two NEGATIVE paths are pinned (no event on genuine short corpus / offset past
   end); the positive fire-at-cap assertion needs a >1000-chunk fixture that pushes
@@ -526,25 +625,28 @@
   **Context:** reporter offered the PR (green-lit in the issue thread with the
   three-label reproducer as tests); keep phase `regex_match`; a decline
   threshold is a follow-on decision. **Effort:** M. **P2.**
-- [ ] **P2 — skillopt field-report items (#4119, all verified at HEAD).**
-  **What:** (a) in-loop runtime-deadline check (orchestrator.ts:440 is
-  step-granular); (b) output-size-aware cost estimate (preflight.ts fixed
-  800-token constant); (c) validation-gate n-gram overlap detector vs judge
-  definitions; (d) stronger bootstrap judges; (e) opt-in `--hermetic-config`
-  (CLAUDE_CONFIG_DIR) for claude-cli children — default-on needs its own
-  security decision (the provider deliberately rides the operator's ~/.claude
-  OAuth session); (f) docs: rule judges as a gameable optimizer target, D13
-  limitation, cap sizing, human review of proposed.md is load-bearing.
-  **Context:** issue thread carries the full analysis; CLAUDE_CONFIG_DIR is
-  the documented interim mitigation. **Effort:** M spread. **P2.**
+- [ ] **P2 — skillopt field-report remainder (#4119, issue closed
+  v0.46.28.0/#4475 with these arms still open):** (b) output-size-aware cost
+  estimate (preflight.ts fixed 800-token constant); (c) validation-gate
+  n-gram overlap detector vs judge definitions; (d) stronger bootstrap
+  judges. Shipped in v0.46.28.0: (a) in-rollout-loop runtime deadline
+  (`SKILLOPT_RUNTIME_EXCEEDED` in validate-gate.ts), (e) opt-in
+  `--hermetic-config` (CLAUDE_CONFIG_DIR) for claude-cli children —
+  default-on still needs its own security decision (the provider
+  deliberately rides the operator's ~/.claude OAuth session), (f) the docs
+  arm (`docs/guides/skillopt.md` hardening notes: rule judges gameable, D13
+  prompt-surface-only, cap sizing, human review of proposed.md is
+  load-bearing). The guide names (b) and (c) as tracked follow-ups — this
+  entry is the tracker. **Effort:** M spread. **P2.**
 - [ ] **P3 — orphans.exclude_domains (feature, #4157).** Third exclusion axis
   on the shared orphan policy, matched on the derived domain; must thread the
   orphans denominator query AND both engines' getHealth page-scope rows
   (engine parity). **Effort:** S. **P3.**
-- [ ] **P3 — dream.synthesize flat/root output_root (feature, #4117).**
-  Per-family prefix shape (reflections/originals prefixes derived into prompts
-  AND the fail-closed allow-list; default preserves wiki/). No config-registry
-  drift to fix (`dream.` prefix already accepted). **Effort:** M. **P3.**
+- [x] **P3 — dream.synthesize flat/root output_root (feature, #4117).** DONE
+  (v0.46.28.0, #4475): `dream.synthesize.output_root` +
+  `reflections_slug_prefix`/`originals_slug_prefix` ship as per-lane output
+  namespaces (prefixes derived into prompts AND the fail-closed allow-list;
+  default preserves wiki/).
 - [ ] **P2 — test debt from the chennai wave's pre-landing review (deferred
   with rationale, not skipped).** (a) `/mcp` SDK-transport integration test:
   spin the serve-http surface with a legacy no-grant token end-to-end and
@@ -784,8 +886,54 @@
   prefix `waiting_ttl_expired`) that turns out to have been wanted needs a
   `jobs requeue` (or a retry carve-out gated on that prefix) instead of
   hand-resubmitting. The data survives (cancelled rows keep payloads +
-  free their idempotency keys), so this is purely a CLI surface. **Effort:**
+  free their idempotency keys), so this is purely a CLI surface. v0.46.25.0
+  adds a SECOND machine-readable family to gate on: private-queue reconcile
+  cancellations are stamped `private_queue_reconciled: <detail>`
+  (PRIVATE_QUEUE_RECONCILE_REASON_PREFIX, minions/queue.ts). A requeue of
+  those rows must strip parent/ownership metadata (parent_job_id,
+  private_queue_owner_*) and resubmit into a CLAIMABLE queue — never flip
+  status in place inside a dead dream-inline-* queue. **Effort:**
   S. **Priority:** P2. (Pre-landing data-migration review, five-issue wave.)
+- [ ] **P2 — private-queue FK `ON DELETE SET NULL` erases owner evidence.**
+  **What:** purging/pruning an owner job nulls every child's
+  `private_queue_owner_job_id` (migrate.ts v136 FK), so its queue silently
+  degrades from the fast owner-terminal recovery path to legacy-unowned —
+  recovery's scan still sees the lease, but once that expires the queue needs
+  manual retriage instead of auto-cancel. Consider stamping a tombstone
+  (e.g. keep the id, mark owner_missing) or having prune reconcile the queue
+  first. Deferred from the v0.46.25.0 review (behavior change, not coverage).
+  **Effort:** M. **Priority:** P2.
+- [ ] **P2 — retry-shadow: a same-job-id retry shadows the crashed attempt's
+  private queue.** **What:** `jobs retry` reuses the job id; if the prior
+  attempt crashed owning a dream-inline queue, the retried (non-terminal)
+  owner makes the stale queue classify `live_owner` and recovery skips it
+  until the new attempt terminalizes. Options: retry clears/reconciles the
+  old private queue on transition, or recovery keys on attempt rather than
+  id. Deferred from the v0.46.25.0 review. **Effort:** M. **Priority:** P2.
+- [ ] **P3 — v136 `CREATE INDEX` is non-concurrent.** **What:** on a large
+  hosted-Postgres `minion_jobs`, migration v136's two partial indexes take a
+  write lock for the build. Fine for typical brains; a busy multi-tenant
+  install would want `CONCURRENTLY` (which needs the migration runner to
+  support non-transactional steps). **Effort:** M. **Priority:** P3.
+- [ ] **P3 — full 3-way schema-blob parity test.** **What:**
+  `pglite-schema.ts` / `schema-embedded.generated.ts` / `schema.sql` have no general
+  drift guard; v0.46.25.0 added a private-queue-scoped parity pin
+  (test/private-queue-schema-parity.test.ts) — generalize it to the whole
+  blob surface (normalized statement diff). **Effort:** M. **Priority:** P3.
+- [ ] **P3 — `jobs work` daemon-level e2e + global stats discovery.**
+  **What:** the worker-startup recovery lane is covered at the extracted-
+  function level (maybeRunWorkerStartupRecovery); a daemon-level e2e (spawn
+  real `gbrain jobs work`, observe recovery, stop it) would close the last
+  gap, and `jobs stats` without `--queue` could surface abandoned private
+  queues globally (today doctor is the discovery surface). **Effort:** M.
+  **Priority:** P3.
+- [ ] **P3 — consider ChildWorkerSupervisor.run() catching beforeSpawn
+  errors.** **What:** today a rejecting `beforeSpawn` propagates out of
+  `run()` with no crash accounting or respawn (documented contract;
+  composers must try/catch — MinionSupervisor does). A cross-model review
+  dissent argues run() should catch hook errors so one recovery failure can
+  never stop a worker silently. Behavior change; needs its own review.
+  **Effort:** S. **Priority:** P3.
 - [ ] **P2 — dream-path quota-degradation integration tests.** **What:**
   live-queue integration tests for the QueueQuotaExceededError consumers:
   cycle patterns → `skipped('admission_quota')`, synthesize → quota latch
@@ -1630,11 +1778,11 @@ master before starting, several fixes landed independently).
   guard. Decide the intended surface alongside PR #2509 (whoknows --explain
   per-result factor breakdown) and delete whichever lane loses. Where:
   `src/cli.ts`, `src/commands/whoknows.ts`, PR #2509.
-- [ ] **P3 — #2544 second half: per-put_page `getAllSlugs` full scan.** The
-  getChunks egress half shipped in this wave (explicit non-vector column
-  list). The remaining Postgres-egress cost is put_page's per-call
-  `getAllSlugs` table scan — needs a targeted existence probe or cached slug
-  set. Where: `src/core/operations.ts` put_page path, both engines.
+- [x] **P3 — #2544 second half: per-put_page `getAllSlugs` full scan.** DONE
+  (v0.46.28.0, #4475): `runAutoLink`'s existence check is now a targeted
+  probe instead of hydrating the whole slug set on every put_page. (The
+  getChunks egress half had already shipped: explicit non-vector column
+  list.) Issue closed.
 - [ ] **P3 — #1558 admin-UI register form.** The `/admin/api/register-client`
   API now accepts `source` + `federatedRead` (this wave, PR #2016 absorbed);
   the admin SPA form fields + `/admin/api/sources` picker are the UI layer.
@@ -2056,10 +2204,16 @@ events at the IPC delivery point and dedupes via the transcript's
   plus user reports of "it only noticed on my next message". **Start:**
   `src/commands/hook.ts` (the event already has a dispatch slot pattern),
   `src/core/bootstrap/hooks.ts` registration writers.
-- [ ] **P3 — engine-uniform IPC listener (Postgres serves).** serve's resolve/turn_context
-  socket is PGLite-gated (`src/mcp/server.ts`: `cfg?.engine === 'pglite'`), so on a
-  Postgres brain `gbrain hook user-prompt` short-circuits (`no_pglite_path`) and the
-  hook lane is PGLite-only. Extending the listener needs (a) a canonical per-connection
+- [x] **P3 — engine-uniform IPC listener (Postgres serves).** DONE (#4245): serve now
+  listens for Postgres brains too — socket + turn_context secret key off
+  `hash12(database_url)` under `~/.gbrain/run` (0700) via
+  `resolveSocketPathForConfig`/`ipcSecretPathForConfig` in
+  `src/core/context/resolve-ipc.ts`; the hook lane's user-prompt/compact/
+  session-start arms route through the same resolver. Original filing:
+  serve's resolve/turn_context
+  socket was PGLite-gated (`src/mcp/server.ts`: `cfg?.engine === 'pglite'`), so on a
+  Postgres brain `gbrain hook user-prompt` short-circuited (`no_pglite_path`) and the
+  hook lane was PGLite-only. Extending the listener needs (a) a canonical per-connection
   socket path for brains with no data dir (e.g. `~/.gbrain/run/resolve-<hash12(database_url)>.sock`,
   0700 dir) and (b) a secret-file home for `turn_context` auth (same hash-keyed run dir).
   The cathedral-3 branch prototyped (a) as `resolveSocketPathForConfig` (see branch
@@ -2125,7 +2279,9 @@ are the bar). Plan + GSTACK REVIEW REPORT at
   `gbrain serve` or any write path blocks on the lock until watch exits.
   WATCH_HELP documents the monopoly; the fix is an IPC rung in watch's
   resolver (reuse `resolveViaIpc` like the ambient reflex's ladder) so a
-  running serve answers and watch never takes the lock. **Why:** watch +
+  running serve answers and watch never takes the lock (v0.46.24.0's
+  serve-delegated sync built the additive-kind groundwork — `sync_start`/
+  `sync_status` in resolve-ipc.ts are the pattern to copy). **Why:** watch +
   serve concurrently is the natural agent topology. **Where:**
   `src/commands/watch.ts`, `src/core/context/resolve-ipc.ts` (red-team RT2).
 - [ ] **P3 — capability/version gate for host-injected reflex resolvers.**
@@ -4374,7 +4530,7 @@ contributor traps.
 
 ## v0.37.6.0 OpenRouter recipe follow-ups (v0.37.x+ / v0.38.x)
 
-- [ ] **v0.37.x: Verify `tool_use_id` stability through OpenRouter with a live test, then decide whether to relax `isAnthropicProvider()`'s subagent-only gate.** v0.37.6.0 ships `supports_subagent_loop: false` on the OR recipe as informational only — the real gate is `isAnthropicProvider()` in `src/core/model-config.ts`, which hard-rejects every non-Anthropic provider at subagent submit time. OR proxies Anthropic-direct models that DO support stable `tool_use_id` by contract, but OR's response normalization may strip or re-encode them. A short live test: spin up a real OR account, run a subagent loop via `openrouter:anthropic/claude-haiku-4.5`, deliberately abort mid-loop, retry. Assert tool_use_id blocks are byte-identical across attempts. If they are, the `isAnthropicProvider()` check could relax to allow Anthropic models proxied through OR, giving users OR's price/availability story for subagent work. This is a deeper structural change than a recipe-flag flip; needs its own /plan-eng-review pass. Filed during v0.37.6.0 codex review.
+- [ ] **v0.37.x: Verify `tool_use_id` stability through OpenRouter with a live test, then decide whether to relax the subagent-loop gate.** v0.37.6.0 shipped `supports_subagent_loop: false` on the OR recipe as informational only; the flag is now enforced — `classifyCapabilities()` in `src/core/ai/capabilities.ts` refuses the subagent tier on it (`unusable:no_subagent_loop`), and the legacy path additionally hard-rejects non-Anthropic providers via `isAnthropicProvider()` in `src/core/model-config.ts` when `agent.use_gateway_loop` is off. OR proxies Anthropic-direct models that DO support stable `tool_use_id` by contract, but OR's response normalization may strip or re-encode them. A short live test: spin up a real OR account, run a subagent loop via `openrouter:anthropic/claude-haiku-4.5`, deliberately abort mid-loop, retry. Assert tool_use_id blocks are byte-identical across attempts (the test itself needs a temporary bypass of the classifier gate, since `classifyCapabilities()` now refuses the OR recipe outright). If they are, BOTH gates need relaxing — the OR recipe's `supports_subagent_loop: false` flag (enforced by `classifyCapabilities()`) and the legacy `isAnthropicProvider()` check — to allow Anthropic models proxied through OR, giving users OR's price/availability story for subagent work. This is a deeper structural change than a recipe-flag flip; needs its own /plan-eng-review pass. Filed during v0.37.6.0 codex review.
 
 - [ ] **v0.37.x: Quarterly OR catalog refresh.** v0.37.6.0 ships 8 curated chat slugs (gpt-5.2, gpt-5.2-chat, gpt-5.5, claude-haiku-4.5, claude-sonnet-4.6, claude-opus-4.7, gemini-3-flash-preview, deepseek-chat) with `price_last_verified: '2026-05-20'`. OR's catalog churns weekly; specific slugs get deprecated, renamed, or merged. Refresh cadence: every 90 days, walk https://openrouter.ai/models, prune deprecated slugs, add new frontier IDs that match the recipe's curation logic (frontier-tier + cheap-routing entry points). Bump `price_last_verified`. The shape-test regression in `test/ai/recipe-openrouter.test.ts` (`MODEL_SHAPE` regex) means typos surface immediately; the catalog refresh is about discovery, not validation.
 
@@ -7417,3 +7573,38 @@ covers DEAD logs; go-forward capture beyond Claude Code is deliberately absent.
 - [ ] P2 (adversarial F3): a chronically-failing transcript (always times out / deterministic all-writes-failed) releases its key on dead AND suppresses the cooldown stamp — re-triaged and re-paid every nightly. Add a bounded per-content-hash failure counter (N strikes → skip + surface in doctor/advisor).
 - [ ] P3 (adversarial F6): legacy direct-Anthropic path with the CDX-6 32k thinking default can exceed the SDK's 10-min default request timeout on slow generations (flag-off deployments only; surfaces as a retryable conn error at full token cost). Set an explicit SDK timeout or cap legacy maxTokens.
 - [ ] P3: phase-end `embedStalePages` runs outside BudgetTracker (bounded to the phase's own writes + 120s; fold under the tracker if spend telemetry wants it).
+
+### Recipe routing follow-up (#4292)
+- [ ] **P3 — install-time MECE warn for resolver rows.** `gbrain integrations
+  install` appends `resolver_rows_to_append` blindly; when an appended row
+  shares trigger phrases with an existing resolver row in the host repo
+  (e.g. "who is" claimed by both a recipe skill and the query skill), routing
+  goes ambiguous with no signal. Warn at install time when a to-append row's
+  quoted phrases already appear in the target RESOLVER.md/AGENTS.md. Effort: S.
+
+## Megawave follow-ups (filed from v0.46.28.0, #4475)
+
+- [ ] **P2 — #4477: db.ts initSchema legacy blob-replay path lacks
+  forward-reference bootstrap.** The legacy schema-blob replay in
+  `src/core/db.ts` doesn't run the bootstrap probe set, so an
+  upgrade-boundary DB can wedge when a migration builds an index on a column
+  the replayed blob predates. Bring the replay path under the same
+  forward-reference probes `initSchema` uses. Effort: M.
+- [ ] **P3 — #4478: subagent-crash-replay-multi-provider openrouter matrix
+  rows stale.** The matrix rows have been stale since
+  `supports_subagent_loop: false` enforcement landed; re-derive or prune the
+  openrouter rows so the suite tests what the gateway actually allows.
+  Effort: S.
+- [ ] **P3 — #4479: ci-local hardening.** (a) pin the `oven/bun` image to the
+  host bun version (drift between host and container bun has produced
+  container-only results); (b) fix the upload-path fuzz depth-1 `/app` mount
+  expectation. Effort: S.
+- [ ] **P2 — #4480: deferred review findings from the megawave** (each
+  >10-line, needs its own design pass): (a) `take-proposals.ts` TOCTOU —
+  claim-first CAS restructure (local CLI, low concurrency, but the
+  check-then-write window is real); (b) `cjk-keyword-sql.ts` doesn't honor
+  `types`/`exclude_slugs` filters — builder-param plumbing across BOTH
+  engines + exact-lookup gating; (c) `get_usage` per-engine sink —
+  last-engine-wins when multiple engines are live (the read→admin scope
+  tightening landed in v0.46.28.0; the sink unification did not). Effort: M
+  spread.
